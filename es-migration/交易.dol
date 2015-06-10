@@ -1,0 +1,131 @@
+create table tmp.ben_ca_orderitem_id AS 
+SELECT
+use_ts,
+ca_use_pk,
+ca_item_id,
+ca_itemgrp_id,
+ca_batch_id,
+ca_cost,
+split(trade_biz_id,'_')[1] AS orderitem_id
+from (
+select event_ts use_ts,ca_use_pk
+,ca_item_id,ca_itemgrp_id
+,ca_batch_id
+,ca_cost,trade_biz_id
+from dpdw_event_incr_h_ca_discount_use
+where ca_tool_id is not null
+union all
+select event_ts use_ts,ca_use_pk
+,ca_item_id,ca_itemgrp_id
+,ca_batch_id
+,ca_cost,trade_biz_id
+from dpdw_event_incr_h_ca_reduction_use
+where ca_tool_id is not null
+union all
+select min(event_ts) use_ts,concat_ws(',',to_array(ca_use_pk)) ca_use_pk
+,concat_ws(',',to_array(ca_item_id)) ca_item_id,ca_itemgrp_id
+,ca_batch_id
+,sum(ca_cost) ca_cost,trade_biz_id
+from dpdw_event_incr_h_ca_account_use
+where ca_tool_id is not null
+group by ca_itemgrp_id,ca_batch_id,trade_biz_id
+union all
+select min(event_ts) use_ts,concat_ws(',',to_array(ca_use_pk)) ca_use_pk
+,concat_ws(',',to_array(ca_item_id)) ca_item_id,ca_itemgrp_id
+,ca_batch_id
+,sum(ca_cost) ca_cost,concat('order', movie_orderitem_id) trade_biz_id
+from dpdw_event_incr_h_ca_voucher_use
+where ca_tool_id is not null
+group by ca_itemgrp_id,ca_batch_id,concat('order', movie_orderitem_id)
+) t;
+
+
+drop table tmp.ben_ca_order_product_type;
+create table tmp.ben_ca_order_product_type AS 
+SELECT
+detl.*
+,o.ind_quantity
+,o.ind_order_amt
+,if(o.is_order_ticket = 1 OR o.is_order_abandon = 1,1,0) fraud_is_tag
+,if(o.refundstatus IN (2,3) AND o.is_order_abandon = 1,1,0) fraud_is_refund
+,o.dim_city_id
+,o.dim_city_name
+,o.dim_add_platform_id
+,coalesce(o.dim_add_platform_name,'其他') trade_add_platform_name
+,if(o.dim_add_platform_name='PC','pc',o.dim_add_platform_os) trade_add_os
+,o.dim_product_id
+,o.dim_productgroup_id
+,'' trade_product_title
+,o.user_id
+,o.order_add_dpid dpid
+,o.rel_product_selfcat0_id
+,o.rel_product_selfcat0_name
+,o.rel_product_selfcat1_id
+,o.rel_product_selfcat1_name
+,o.product_type
+,o.product_type_name
+from tmp.ben_ca_orderitem_id detl
+JOIN dpdw_wide_incr_d_tgtrd_order o
+on detl.orderitem_id=if(o.order_id=0 or o.order_id is null,o.orderitem_id,o.order_id)
+and o.hp_cal_dt = '2015-06-08'
+AND substr(o.order_suc_ts, 1,10) = '2015-06-08'
+where use_ts >= '2015-06-08' and use_ts < '2015-06-09';
+
+drop table tmp.ben_ca_order_pk_ta;
+create table tmp.ben_ca_order_pk_ta AS 
+SELECT
+t.*,
+CONCAT('ta_',s.record_id) AS order_pk
+from tmp.ben_ca_order_product_type t
+left outer join 
+(SELECT DISTINCT
+user_id,
+phone,
+dpid,
+record_id,
+platform,
+confirm_time,
+pay_order_id
+FROM dpmid_ta_operating_expenses_sd
+WHERE confirm_time IS NOT NULL
+AND hp_cal_dt = '2015-06-08') s
+on t.orderitem_id = s.pay_order_id
+WHERE t.product_type=13;
+
+drop table tmp.ben_ca_order_pk_booking;
+create table tmp.ben_ca_order_pk_booking AS 
+SELECT
+t.*,
+CONCAT('book_',id) AS order_pk
+from tmp.ben_ca_order_product_type t
+left outer join 
+(
+SELECT
+yyb.id,
+a.pay_order_id
+from
+(SELECT * FROM dpods_yy_bookingcashaction WHERE hp_statdate = "2015-06-08") a
+JOIN 
+(SELECT user_id,phone AS mobile_no, id, apiversion
+ FROM dpods_yy_bookingrecord
+ WHERE hp_statdate = '2015-06-08') yyb
+ON a.record_id = yyb.id
+JOIN
+( SELECT operate_id,MIN(created_time) AS created_time
+ FROM dpods_yy_operationlog 
+ WHERE operate_type = 20
+ AND operate_action = 220
+ GROUP BY 1) yyo 
+ON yyb.id = yyo.operate_id
+WHERE yyo.created_time IS NOT NULL) s
+on t.orderitem_id = s.pay_order_id
+WHERE t.product_type=10;
+
+
+
+
+
+
+
+
+

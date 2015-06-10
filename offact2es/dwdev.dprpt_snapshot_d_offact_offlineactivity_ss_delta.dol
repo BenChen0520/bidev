@@ -1,0 +1,31 @@
+use bi;
+set mapred.job.name = dprpt_snapshot_d_offact_offlineactivity_ss_delta;
+
+INSERT OVERWRITE TABLE dprpt_snapshot_d_offact_offlineactivity_ss_delta
+SELECT
+ COALESCE(delta.act_user_key,del.act_user_key)
+,IF(delta.act_user_key IS NOT NULL,delta.offlineactivityid,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.begintime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.endtime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.applybegintime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.applyendtime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.cityid,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.property,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.type,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.mode,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.joincount,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.activity_addtime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.userid,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.phoneno,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.extracount,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.confirmstatus,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.role,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.activityuser_addtime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.first_addtime,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.first_offlineactivityid,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.review_cnt,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.applysource,NULL)
+,IF(delta.act_user_key IS NOT NULL,delta.status,NULL)
+FROM dprpt_snapshot_d_offact_offlineactivity_ss_cdc_delta delta
+FULL OUTER JOIN dprpt_snapshot_d_offact_offlineactivity_ss_cdc_del del
+ON delta.act_user_key = del.act_user_key;

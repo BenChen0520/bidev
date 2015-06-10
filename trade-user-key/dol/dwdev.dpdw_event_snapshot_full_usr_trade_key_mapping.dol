@@ -1,0 +1,402 @@
+#**
+# Name:      dpdw_event_snapshot_full_usr_trade_key_mapping
+# Desc:      生成全量交易数据的user key
+# Inputs:    
+# Creat Date: 2015-05-21  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dpdw_event_snapshot_full_usr_trade_key_mapping;
+create temporary function row_number as 'org.apache.hadoop.hive.ql.udf.generic.GenericUDAFRowNumber';
+
+## DROP临时表
+DROP TABLE IF EXISTS dpstg_trade_key_mapping_mobile_tmp;
+DROP TABLE IF EXISTS dpstg_trade_key_mapping_dpid_tmp;
+#**
+
+DROP TABLE IF EXISTS dpdw_event_snapshot_full_usr_trade_key_mapping;
+CREATE TABLE dpdw_event_snapshot_full_usr_trade_key_mapping (
+user_finl_key string,
+user_ini_key string,
+user_id int,
+org_user_id int,
+mobile_no string,
+dpid bigint,
+order_pk string,
+order_id int,
+orderitem_id int,
+success_ts string,
+product_type int,
+app_flg int
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\005'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dpdw_event_snapshot_full_usr_trade_key_mapping SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+## 含有user_id的交易直接使用user_id来作为initial和finial的key
+INSERT OVERWRITE TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_id AS user_finl_key,
+user_id AS user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM dpdw_event_snapshot_full_usr_trade_succ
+WHERE user_id > 0;
+
+
+## 为新出现的mobile生成key： initial key＝hash64的值， finial key 是空
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+NULL AS user_finl_key,
+CONCAT(hash64(CONCAT(r.mobile_no,'mobile_no')),'-',r.mobile_no) AS user_ini_key,
+r.user_id,
+r.org_user_id,
+r.mobile_no,
+r.dpid,
+r.order_pk,
+r.order_id,
+r.orderitem_id,
+r.success_ts,
+r.product_type,
+r.app_flg
+FROM dpdw_event_snapshot_full_usr_trade_succ r
+LEFT OUTER JOIN (SELECT mobile_no FROM dpdw_event_snapshot_full_usr_trade_key_mapping WHERE mobile_no IS NOT NULL AND user_id > 0 GROUP BY mobile_no) t
+ON r.mobile_no = t.mobile_no
+WHERE (r.user_id IS NULL OR r.user_id=0)
+AND r.mobile_no IS NOT NULL
+AND t.mobile_no IS NULL;
+
+##对于已经存在的mobile，我们将从历史数据中寻找相应user_id的key
+## step 1 找到所有的mobile相应的历史数据
+CREATE TABLE dpstg_trade_key_mapping_mobile_tmp AS 
+SELECT
+t.user_finl_key,
+t.user_ini_key,
+r.user_id,
+r.org_user_id,
+r.mobile_no,
+r.dpid,
+r.order_pk,
+r.order_id,
+r.orderitem_id,
+r.success_ts,
+r.product_type,
+r.app_flg,
+m.min_success_ts,
+m.max_success_ts,
+t.order_pk AS r_order_pk,
+t.success_ts AS r_success_ts
+FROM dpdw_event_snapshot_full_usr_trade_succ r
+JOIN dpdw_event_snapshot_full_usr_trade_key_mapping t
+ON r.mobile_no = t.mobile_no
+JOIN (
+SELECT mobile_no,MIN(success_ts) AS min_success_ts, MAX(success_ts) AS max_success_ts
+FROM dpdw_event_snapshot_full_usr_trade_key_mapping
+WHERE mobile_no IS NOT NULL
+AND user_id > 0
+GROUP BY mobile_no
+) m
+ON r.mobile_no = m.mobile_no
+WHERE (r.user_id IS NULL OR r.user_id=0)
+AND r.mobile_no IS NOT NULL
+AND t.mobile_no IS NOT NULL
+AND t.user_id > 0
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16;
+
+## step 2 如果该order在历史数据之后
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM (
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ROW_NUMBER() OVER(PARTITION BY user_id,org_user_id,mobile_no,dpid,order_pk,order_id,orderitem_id,success_ts,product_type,app_flg ORDER BY r_success_ts DESC,r_order_pk DESC) AS m_seq
+FROM dpstg_trade_key_mapping_mobile_tmp
+WHERE success_ts > max_success_ts
+AND r_success_ts = max_success_ts
+) tmp
+WHERE m_seq = 1;
+
+## step 3 如果该order在历史数据之前
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM (
+SELECT
+user_finl_key,
+CONCAT(hash64(CONCAT(mobile_no,'mobile_no')),'-',mobile_no) AS user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ROW_NUMBER() OVER(PARTITION BY user_id,org_user_id,mobile_no,dpid,order_pk,order_id,orderitem_id,success_ts,product_type,app_flg ORDER BY r_success_ts ASC,r_order_pk ASC) AS m_seq
+FROM dpstg_trade_key_mapping_mobile_tmp
+WHERE success_ts < min_success_ts
+AND r_success_ts = min_success_ts
+) tmp
+WHERE m_seq = 1;
+
+## step 4 如果该order在历史数据之间
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM (
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+r_success_ts,
+ROW_NUMBER() OVER(PARTITION BY user_id,org_user_id,mobile_no,dpid,order_pk,order_id,orderitem_id,success_ts,product_type,app_flg ORDER BY r_success_ts DESC,r_order_pk DESC) AS m_seq
+FROM dpstg_trade_key_mapping_mobile_tmp
+WHERE success_ts >= min_success_ts
+AND success_ts <= max_success_ts
+AND success_ts >= r_success_ts
+) t
+WHERE t.m_seq = 1
+;
+
+
+## 为新出现的dpid生成key：initial key＝hash64的值， finial key 是空
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+NULL AS user_finl_key,
+CONCAT(hash64(CONCAT(r.dpid,'dpid')),'-',r.dpid) AS user_ini_key,
+r.user_id,
+r.org_user_id,
+r.mobile_no,
+r.dpid,
+r.order_pk,
+r.order_id,
+r.orderitem_id,
+r.success_ts,
+r.product_type,
+r.app_flg
+FROM dpdw_event_snapshot_full_usr_trade_succ r
+LEFT OUTER JOIN (SELECT dpid FROM dpdw_event_snapshot_full_usr_trade_key_mapping WHERE dpid IS NOT NULL AND (mobile_no IS NOT NULL OR user_id > 0) GROUP BY dpid)t
+ON r.dpid = t.dpid
+WHERE (r.user_id IS NULL OR r.user_id=0)
+AND r.mobile_no IS NULL
+AND r.dpid IS NOT NULL
+AND t.dpid IS NULL;
+
+
+##对于已经存在的dpid，我们将从历史数据中寻找相应user_id或者mobile的key
+## step 1 找到所有的mobile相应的历史数据
+CREATE TABLE dpstg_trade_key_mapping_dpid_tmp AS 
+SELECT
+t.user_finl_key,
+t.user_ini_key,
+r.user_id,
+r.org_user_id,
+r.mobile_no,
+r.dpid,
+r.order_pk,
+r.order_id,
+r.orderitem_id,
+r.success_ts,
+r.product_type,
+r.app_flg,
+m.min_success_ts,
+m.max_success_ts,
+t.order_pk AS r_order_pk,
+t.success_ts AS r_success_ts
+FROM dpdw_event_snapshot_full_usr_trade_succ r
+JOIN dpdw_event_snapshot_full_usr_trade_key_mapping t
+ON r.dpid = t.dpid
+JOIN (
+SELECT dpid,MIN(success_ts) AS min_success_ts, MAX(success_ts) AS max_success_ts
+FROM dpdw_event_snapshot_full_usr_trade_key_mapping
+WHERE dpid IS NOT NULL
+AND (mobile_no IS NOT NULL OR user_id > 0)
+GROUP BY dpid
+) m
+ON r.dpid = m.dpid
+WHERE (r.user_id IS NULL OR r.user_id=0)
+AND r.mobile_no IS NULL
+AND r.dpid IS NOT NULL
+AND (t.mobile_no IS NOT NULL OR t.user_id > 0)
+AND t.dpid IS NOT NULL
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16;
+
+## step 2 如果该order在历史数据之后
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM (
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ROW_NUMBER() OVER(PARTITION BY user_id,org_user_id,mobile_no,dpid,order_id,orderitem_id,success_ts,product_type,app_flg ORDER BY r_success_ts DESC,r_order_pk DESC) AS m_seq
+FROM dpstg_trade_key_mapping_dpid_tmp
+WHERE success_ts > max_success_ts
+AND r_success_ts = max_success_ts
+) tmp
+WHERE m_seq = 1;
+
+## step 3 如果该order在历史数据之前
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM (
+SELECT
+user_finl_key,
+CONCAT(hash64(CONCAT(dpid,'dpid')),'-',dpid) AS user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ROW_NUMBER() OVER(PARTITION BY user_id,org_user_id,mobile_no,dpid,order_pk,order_id,orderitem_id,success_ts,product_type,app_flg ORDER BY r_success_ts ASC,r_order_pk ASC) AS m_seq
+FROM dpstg_trade_key_mapping_dpid_tmp
+WHERE success_ts < min_success_ts
+AND r_success_ts = min_success_ts
+) tmp
+WHERE m_seq = 1;
+
+## step 4 如果该order在历史数据之间
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_mapping
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg
+FROM (
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+r_success_ts,
+ROW_NUMBER() OVER(PARTITION BY user_id,org_user_id,mobile_no,dpid,order_pk,order_id,orderitem_id,success_ts,product_type,app_flg ORDER BY r_success_ts DESC,r_order_pk DESC) AS m_seq
+FROM dpstg_trade_key_mapping_dpid_tmp
+WHERE success_ts >= min_success_ts
+AND success_ts <= max_success_ts
+AND success_ts >= r_success_ts
+) t
+WHERE t.m_seq = 1
+;

@@ -1,0 +1,30 @@
+use bi;
+set mapred.job.name = dprpt_snapshot_d_offact_offlineactivity_ss;
+
+INSERT OVERWRITE TABLE dprpt_snapshot_d_offact_offlineactivity_ss
+SELECT
+CONCAT(COALESCE(offlineactivityid,'NULL'),'-',COALESCE(userid,'NULL')) AS act_user_key
+,offlineactivityid
+,begintime
+,endtime
+,applybegintime
+,applyendtime
+,cityid
+,property
+,type
+,mode
+,joincount
+,activity_addtime
+,userid
+,phoneno
+,extracount
+,confirmstatus
+,role
+,activityuser_addtime
+,first_addtime
+,first_offlineactivityid
+,review_cnt
+,applysource
+,status
+FROM dpdw_wide_snapshot_d_offact_offlineactivity
+WHERE hp_cal_dt = '${env.YYYYMMDD}';

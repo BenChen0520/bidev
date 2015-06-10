@@ -1,0 +1,127 @@
+#**
+# Name:   dpdw_event_snapshot_full_usr_retain_key
+# Desc:   星图专用-优惠发放
+# Inputs: ${env.YYYYMMDD} 数据计算日期
+# Create Date: 2015-03-05
+# Histoy:
+*#
+
+#*
+DROP TABLE IF EXISTS dpdw_event_snapshot_full_usr_retain_key;
+CREATE TABLE dpdw_event_snapshot_full_usr_retain_key
+( order_pk string comment '关联订单'
+ ,user_ini_key STRING COMMENT '用户首次购买初始user_key'
+ ,user_finl_key STRING COMMENT '用户首次购买最终user_key'
+ ,ini_trade_sequence int comment '初始user_key的订单顺序'
+ ,finl_trade_sequence int comment '最终user_key的订单顺序'
+ ,trade_seq_site int comment '全站购买次数'
+ ,newbuyer_is_7days_rebuy int comment '是否7日回购新用户'
+ ,first_buy_ts STRING COMMENT '用户首次购买时间'
+ ,interval_first2secondary BIGINT comment '新用户1转2的时间'
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\005'
+COLLECTION ITEMS TERMINATED BY '\002'
+MAP KEYS TERMINATED BY '\003'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE
+;
+
+ALTER TABLE dpdw_event_snapshot_full_usr_retain_key SET SERDEPROPERTIES('serialization.null.format' = "");
+*#
+
+use bi;
+set mapred.job.name = dpdw_event_snapshot_full_usr_retain_key;
+
+##增加reduce个数
+set hive.exec.reducers.bytes.per.reducer=100000000;
+##合并输出小文件
+set hive.merge.mapfiles=true;
+set hive.merge.mapredfiles=true;
+set hive.merge.size.per.task=256000000;
+set hive.mergejob.maponly=true;
+set hive.merge.smallfiles.avgsize=16000000;
+
+
+INSERT OVERWRITE TABLE dpdw_event_snapshot_full_usr_retain_key
+SELECT
+ order_pk
+,user_ini_key
+,user_finl_key
+,ini_trade_sequence
+,finl_trade_sequence
+,is_new
+,first_buy_ts
+,total_seq
+,next_success_ts
+,success_ts
+,mobile_no
+,dpid
+,user_id
+,org_user_id
+,app_flg
+,product_type
+,order_id
+,orderitem_id
+,IF(is_new = 1,unix_timestamp(next_success_ts)-unix_timestamp(success_ts),NULL) AS 1to2_trade_sec
+,IF(is_new = 1, newbuyer_is_7days_rebuy,0) as newbuyer_is_7days_rebuy
+FROM
+  ( SELECT 
+    user_ini_key
+   ,user_finl_key
+   ,ini_trade_sequence
+   ,finl_trade_sequence
+   ,retain_key
+   ,seq
+   ,is_new
+   ,order_pk
+   ,success_ts
+   ,LEAD(success_ts) OVER (PARTITION BY retain_key ORDER BY seq) AS next_success_ts
+   ,LAST_VALUE(seq) OVER (PARTITION BY retain_key ORDER BY seq ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS total_seq
+   ,first_buy_ts
+   ,newbuyer_is_7days_rebuy
+   ,mobile_no
+   ,dpid
+   ,user_id
+   ,org_user_id
+   ,app_flg
+   ,product_type
+   ,order_id
+   ,orderitem_id
+FROM
+  ( SELECT a.user_ini_key
+          ,a.user_finl_key
+          ,a.ini_trade_sequence
+          ,a.finl_trade_sequence
+          ,COALESCE(a.user_finl_key,a.user_ini_key) retain_key
+          ,CASE WHEN a.user_finl_key IS NOT NULL THEN a.finl_trade_sequence ELSE a.ini_trade_sequence END AS seq
+          ,CASE WHEN a.ini_trade_sequence = 1 THEN 1 ELSE 0 END AS is_new
+          ,b.first_buy_ts
+          ,b.newbuyer_is_7days_rebuy
+          ,a.order_pk
+          ,a.mobile_no
+          ,a.dpid
+          ,a.user_id
+          ,a.org_user_id
+          ,a.success_ts
+          ,a.app_flg
+          ,a.product_type
+          ,a.order_id
+          ,a.orderitem_id
+     FROM (SELECT
+               fbs.user_ini_key,
+               fbs.success_ts AS first_buy_ts,
+               MAX(IF(DATEDIFF(TO_DATE(rebuy.success_ts),TO_DATE(fbs.success_ts)) BETWEEN 1 AND 7, 1 , 0 )) AS newbuyer_is_7days_rebuy
+            FROM dpdw_event_snapshot_full_usr_trade_key_sequence fbs
+            JOIN dpdw_event_snapshot_full_usr_trade_key_sequence rebuy
+            ON fbs.user_ini_key = rebuy.user_ini_key
+            AND fbs.ini_trade_sequence = 1
+            GROUP BY 1,2) b
+     JOIN dpdw_event_snapshot_full_usr_trade_key_sequence a
+     ON a.user_ini_key = b.user_ini_key
+   ) t
+)tmp;
+
+
+
+

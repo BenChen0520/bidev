@@ -1,0 +1,35 @@
+
+
+select 
+to_date(success_ts),
+count(*) as new_cnt
+from dpdw_event_snapshot_full_usr_trade_key_sequence
+where product_type = 11
+AND ini_trade_sequence = 1
+AND success_ts >= '2015-04-01'
+and success_ts <= '2015-04-23'
+
+
+select
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ini_trade_sequence,
+finl_trade_sequence,
+to_date(success_ts) as success_day
+from dpdw_event_snapshot_full_usr_trade_key_sequence
+where product_type = 11
+and ini_trade_sequence = 1
+AND success_ts >= '2015-04-01'
+and success_ts <= '2015-04-23'
+left outer join 
+

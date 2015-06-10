@@ -1,0 +1,131 @@
+create table tmp.ben_ta_f as
+select distinct user_id, phone, dpid,confirm_time,record_id
+from dpmid_ta_operating_expenses_sd
+where hp_cal_dt = '2015-05-26'
+and to_date(confirm_time) >= '2015-05-13'
+and to_date(confirm_time) <= '2015-05-20'
+
+select count(*) from tmp.ben_ta_f;--342669
+
+
+
+create temporary function row_number as 'org.apache.hadoop.hive.ql.udf.generic.GenericUDAFRowNumber';
+
+create table tmp.ben_ta_f_seq as
+select user_id, phone, dpid,confirm_time,record_id,row_number() over(order by confirm_time) AS seq
+from tmp.ben_ta_f;
+
+
+create temporary function row_number as 'org.apache.hadoop.hive.ql.udf.generic.GenericUDAFRowNumber';
+
+create table tmp.ben_ta_f_user as
+select
+user_id,
+phone,
+dpid,
+confirm_time,
+record_id,
+seq
+from 
+(
+select
+user_id,
+phone,
+dpid,
+confirm_time,
+record_id,
+seq
+from tmp.ben_ta_f_seq 
+where user_id >0
+
+union all
+
+select
+user_id,
+phone,
+dpid,
+confirm_time,
+record_id,
+seq
+from (
+select
+b.user_id,
+a.phone,
+a.dpid,
+a.confirm_time,
+a.record_id,
+a.seq,
+row_number() over(order by b.seq desc) AS nseq
+from
+(select *
+from tmp.ben_ta_f_seq 
+where user_id = 0) a
+join 
+(select *
+from tmp.ben_ta_f_seq 
+where user_id >0) b
+on a.phone = b.phone
+where a.seq > b.seq) tmp
+where nseq = 1
+
+union all
+
+select
+COALESCE(b.user_id,a.record_id) AS user_id,
+a.phone,
+a.dpid,
+a.confirm_time,
+a.record_id,
+a.seq
+from
+(select *
+from tmp.ben_ta_f_seq 
+where user_id = 0) a
+left outer join 
+(select  mobile_no,max(user_id) as user_id
+from dpdw_event_snapshot_full_usr_trade_key_sequence
+where user_id >0
+group by 1) b
+on a.phone = b.mobile_no) ppp;
+
+
+
+
+select count(*) from tmp.ben_ta_f_user;--342670
+select count(*) from tmp.ben_ta_f; --342669
+
+
+
+
+
+select
+count(distinct u.user_id) as first_ta
+from (
+select
+order_pk
+from dpdw_event_snapshot_full_usr_trade_key_sequence
+where product_type = 13
+and to_date(success_ts) = '2015-05-13'
+and ini_trade_sequence  = 1) ini
+join tmp.ben_ta_f_user u
+on CONCAT('ta_',u.record_id)  = ini.order_pk
+--4720
+
+select
+count(*) as liucun_ta
+from (
+select
+distinct u.user_id
+from (
+select
+order_pk
+from dpdw_event_snapshot_full_usr_trade_key_sequence
+where product_type = 13
+and to_date(success_ts) = '2015-05-13'
+and ini_trade_sequence  = 1) ini
+join tmp.ben_ta_f_user u
+on CONCAT('ta_',u.record_id)  = ini.order_pk) f
+join (select user_id,count(*) from tmp.ben_ta_f_user group by 1 having count(*) >1) l
+ON f.user_id = l.user_id;--849
+
+

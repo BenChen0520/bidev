@@ -1,0 +1,257 @@
+#**
+# Name:      dpdm_snapshot_d_usr_user_shop_rel
+# Desc:      用户商户关系
+# Inputs:    ${env.YYYYMMDD} 数据计算时间
+# Creat Date: 2015-05-26  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dpdm_snapshot_d_usr_user_shop_rel;
+
+#**
+
+DROP TABLE IF EXISTS dpdm_snapshot_d_usr_user_shop_rel;
+CREATE TABLE dpdm_snapshot_d_usr_user_shop_rel (
+user_id int,
+shop_id int,
+tg_quantity int,
+tg_amount double,
+ta_quantity int,
+ta_amount double,
+mopay_quantity int,
+mopay_amount double,
+yy_quantity int,
+yy_amount double,
+review_cnt int,
+shopwish_tag int,
+checkin_tag int,
+call_cnt int
+)
+PARTITIONED BY (hp_cal_dt string)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\005'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dpdm_snapshot_d_usr_user_shop_rel SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+
+INSERT OVERWRITE TABLE dpdm_snapshot_d_usr_user_shop_rel PARTITION (hp_cal_dt='${env.YYYYMMDD}')
+SELECT
+user_id,
+shop_id,
+SUM(tg_quantity) AS tg_quantity,
+SUM(tg_amount) AS tg_amount,
+SUM(ta_quantity) AS ta_quantity,
+SUM(ta_amount) AS ta_amount,
+SUM(mopay_quantity) AS mopay_quantity,
+SUM(mopay_amount) AS mopay_amount,
+SUM(yy_quantity) AS yy_quantity,
+SUM(yy_amount) AS yy_amount,
+SUM(review_cnt) AS review_cnt,
+SUM(shopwish_tag) AS shopwish_tag,
+SUM(checkin_tag) AS checkin_tag,
+SUM(call_cnt) AS call_cnt
+FROM 
+(
+SELECT
+user_id,
+vendorshop_id AS shop_id,
+SUM(quantity) AS tg_quantity,
+SUM(amount) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM dpdm_consume_base
+WHERE hp_type = "used"
+AND user_id >0
+AND vendorshop_id >0
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+user_id,
+shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+SUM(1) AS ta_quantity,
+SUM(consumption)  AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM (
+SELECT DISTINCT
+user_id,
+shop_id,
+record_id,
+consumption
+FROM dpmid_ta_operating_expenses_sd
+WHERE confirm_time IS NOT NULL
+AND shop_id > 0
+AND hp_cal_dt = '$env.YYYYMMDD') s
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+userid AS user_id,
+shopid AS shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+SUM(1) AS mopay_quantity,
+SUM(amount) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM dpods_mopay_order
+WHERE islogin = 1
+AND hp_statdate = '$env.YYYYMMDD'
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+yyb.user_id,
+yyb.shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+SUM(yyb.quantity) AS yy_quantity,
+SUM(yyb.consumption) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM
+(SELECT
+user_id,
+shop_id,
+1 AS quantity,
+consumption,
+id
+FROM dpods_yy_bookingrecord
+WHERE hp_statdate = '$env.YYYYMMDD'
+AND user_id > 0) yyb
+JOIN
+(SELECT operate_id,MIN(created_time) AS created_time
+FROM dpods_yy_operationlog
+WHERE operate_type = 20
+AND operate_action = 220
+AND created_time IS NOT NULL
+GROUP BY 1) yyo
+ON yyb.id = yyo.operate_id
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+user_id,
+shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+COUNT(DISTINCT review_id) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM dpmid_dp_review 
+WHERE hp_valid_end_dt  = '3000-12-31'
+AND status = 2
+AND review_type = 100
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+userid AS user_id,
+referid AS shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+1 AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM dpods_dp_wishlist
+WHERE hp_statdate = '$env.YYYYMMDD'
+AND wishtype = 1
+AND userid > 0
+AND referid > 0
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+userid AS user_id,
+shopid AS shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+1 AS checkin_tag,
+CAST(NULL AS DOUBLE) AS call_cnt
+FROM dpods_ci_checkin
+GROUP BY 1,2
+
+UNION ALL
+
+SELECT
+user_id,
+shop_id,
+CAST(NULL AS DOUBLE) AS tg_quantity,
+CAST(NULL AS DOUBLE) AS tg_amount,
+CAST(NULL AS DOUBLE) AS ta_quantity,
+CAST(NULL AS DOUBLE) AS ta_amount,
+CAST(NULL AS DOUBLE) AS mopay_quantity,
+CAST(NULL AS DOUBLE) AS mopay_amount,
+CAST(NULL AS DOUBLE) AS yy_quantity,
+CAST(NULL AS DOUBLE) AS yy_amount,
+CAST(NULL AS DOUBLE) AS review_cnt,
+CAST(NULL AS DOUBLE) AS shopwish_tag,
+CAST(NULL AS DOUBLE) AS checkin_tag,
+SUM(call_cnt) AS call_cnt
+FROM dpdm_incr_d_usr_mapp_call
+GROUP BY 1,2
+) tmp
+GROUP BY 1,2;
+
+

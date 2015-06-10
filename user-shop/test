@@ -1,0 +1,124 @@
+#**
+# Name:      dprpt_snapshot_full_user_shop_consume
+# Desc:      用户商户交易数量金额，包括交易中心数据(团购和闪惠)，外卖，预约预定
+# Inputs:    ${env.YYYYMMDD} 数据计算时间
+# Creat Date: 2015-05-21  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dprpt_snapshot_full_user_shop_consume;
+
+#**
+
+DROP TABLE IF EXISTS dprpt_snapshot_full_user_shop_consume;
+CREATE TABLE dprpt_snapshot_full_user_shop_consume (
+user_id int,
+shop_id int,
+tg_quantity int,
+tg_amount double,
+ta_quantity int,
+ta_amount double,
+mopay_quantity int,
+mopay_amount double,
+yy_quantity int,
+yy_amount double
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\005'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dprpt_snapshot_full_user_shop_consume SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+
+SELECT
+user_id,
+shop_id,
+SUM(quantity) AS quantity,
+SUM(amount) AS amount
+FROM 
+(
+## 团购券
+SELECT
+##voucher_id,
+##entry_id,
+user_id,
+vendorshop_id,
+##used_dt,
+quantity,
+amount,
+
+FROM dpdm_consume_base ##增量分区表
+WHERE hp_type = "used"
+GROUP BY 
+
+UNION ALL
+
+## 闪惠
+SELECT
+orderid,
+##payorderid,
+userid,
+shopid,
+addtime,
+1 AS quantity,
+amount
+FROM dpods_mopay_order ##快照表
+WHERE islogin = 1
+AND hp_statdate = '$env.YYYYMMDD'
+
+UNION ALL
+
+## 外卖
+SELECT DISTINCT
+record_id,
+##pay_order_id,
+user_id,
+shop_id,
+confirm_time,
+1 AS quantity,
+consumption
+FROM dpmid_ta_operating_expenses_sd  ##快照表
+WHERE confirm_time IS NOT NULL
+AND hp_cal_dt = '$env.YYYYMMDD';
+
+UNION ALL
+
+## 预约预定
+SELECT
+yyb.id,
+##yyb.deal_id,
+yyb.user_id,
+yyb.shop_id,
+yyb.booking_time,
+yyb.quantity,
+yyb.consumption
+FROM
+(SELECT
+id,
+##deal_id,
+user_id,
+shop_id,
+booking_time,
+1 AS quantity,
+consumption
+FROM dpods_yy_bookingrecord ##快照表
+WHERE hp_statdate = '$env.YYYYMMDD') yyb
+JOIN
+(SELECT operate_id,MIN(created_time) AS created_time
+FROM dpods_yy_operationlog  ##增量分区表
+WHERE operate_type = 20
+AND operate_action = 220
+GROUP BY 1) yyo 
+ON yyb.id = yyo.operate_id
+WHERE yyo.created_time IS NOT NULL
+) tmp
+GROUP BY 1,2;
+
+
+
+
+
+

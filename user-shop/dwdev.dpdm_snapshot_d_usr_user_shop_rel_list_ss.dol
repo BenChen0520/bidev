@@ -1,0 +1,37 @@
+#**
+# Name:      dpdm_snapshot_d_usr_user_shop_rel_list_ss
+# Desc:      用户的商户关系列表 cdc快照
+# Inputs:    ${env.YYYYMMDD} 数据计算时间
+# Creat Date: 2015-05-26  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dpdm_snapshot_d_usr_user_shop_rel_list_ss;
+
+#**
+
+DROP TABLE IF EXISTS dpdm_snapshot_d_usr_user_shop_rel_list_ss;
+CREATE TABLE dpdm_snapshot_d_usr_user_shop_rel_list_ss (
+user_id int,
+fan_shop_list array<int>,
+potential_shop_list array<int>
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\005'
+COLLECTION ITEMS TERMINATED BY '\002'
+MAP KEYS TERMINATED BY '\003'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dpdm_snapshot_d_usr_user_shop_rel_list_ss SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+INSERT OVERWRITE TABLE dpdm_snapshot_d_usr_user_shop_rel_list_ss
+SELECT
+user_id,
+fan_shop_list,
+potential_shop_list
+FROM dpdm_snapshot_d_usr_user_shop_rel_list
+WHERE hp_cal_dt = '$env.YYYYMMDD';

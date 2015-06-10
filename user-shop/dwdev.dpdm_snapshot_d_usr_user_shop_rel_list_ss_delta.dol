@@ -1,0 +1,40 @@
+#**
+# Name:      dpdm_snapshot_d_usr_user_shop_rel_list_ss_delta
+# Desc:      用户的商户关系列表 cdc表
+# Inputs:    ${env.YYYYMMDD} 数据计算时间
+# Creat Date: 2015-05-26  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dpdm_snapshot_d_usr_user_shop_rel_list_ss_delta;
+
+#**
+
+DROP TABLE IF EXISTS dpdm_snapshot_d_usr_user_shop_rel_list_ss_delta;
+CREATE TABLE dpdm_snapshot_d_usr_user_shop_rel_list_ss_delta (
+user_id int,
+fan_shop_list array<int>,
+potential_shop_list array<int>
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\005'
+COLLECTION ITEMS TERMINATED BY '\002'
+MAP KEYS TERMINATED BY '\003'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dpdm_snapshot_d_usr_user_shop_rel_list_ss_delta SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+INSERT OVERWRITE TABLE dpdm_snapshot_d_usr_user_shop_rel_list_ss_delta
+SELECT
+COALESCE(delta.user_id,del.user_id),
+IF(delta.user_id IS NOT NULL,delta.fan_shop_list,NULL),
+IF(delta.user_id IS NOT NULL,delta.potential_shop_list,NULL)
+FROM dpdm_snapshot_d_usr_user_shop_rel_list_ss_cdc_delta delta
+FULL OUTER JOIN dpdm_snapshot_d_usr_user_shop_rel_list_ss_cdc_del del
+ON delta.user_id = del.user_id;
+
+

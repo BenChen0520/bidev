@@ -1,0 +1,255 @@
+#**
+# Name:   dpdm_usr_retain
+# Desc:   星图专用-优惠发放
+# Inputs: ${env.YYYYMMDD} 数据计算日期
+# Create Date: 2015-03-05
+# Histoy:
+*#
+
+#*
+DROP TABLE IF EXISTS dpdm_usr_retain;
+CREATE TABLE dpdm_usr_retain
+( user_ini_key STRING COMMENT '用户首次购买初始user_key'
+ ,user_finl_key STRING COMMENT '用户首次购买最终user_key'
+ ,interval_first2secondary BIGINT comment '新用户1转2的时间'
+ ,use_ts string comment '优惠使用时间'
+ ,ca_use_pk string comment '优惠使用PK'
+ ,ca_item_id string comment '优惠实例ID'
+ ,ca_itemgrp_id string comment '优惠组ID'
+ ,ca_itemgrp_title string comment '优惠组名称'
+ ,ca_batch_id string comment '营销活动投放批次ID'
+ ,ca_batch_title string comment '营销活动投放批次名称'
+ ,ca_batch_creator string comment '营销活动投放批次投放人'
+ ,ca_tool_id string comment '营销活动投放工具ID'
+ ,ca_tool_title string comment '营销活动投放名称'
+ ,ca_tool_creator string comment '营销活动投放工具创建人'
+ ,ca_tool_start_ts string comment '营销活动投放工具投放开始时间'
+ ,ca_tool_end_ts string comment '营销活动投放工具投放结束时间'
+ ,ca_tool_budget double comment '营销活动投放工具预算额'
+ ,ca_tool_target string comment '营销活动投放工具营销目标'
+ ,ca_project_id string comment '营销活动ID'
+ ,ca_project_title string comment '营销活动名称'
+ ,ca_project_owner string comment '营销活动责任人'
+ ,ca_projefc_dept string comment '营销活动责任部门'
+ ,ca_project_bu string comment '营销活动责任BU'
+ ,ca_project_start_ts string comment '营销活动开始时间'
+ ,ca_project_end_ts string comment '营销活动结束时间'
+ ,ca_form_id string comment '优惠形式ID'
+ ,ca_form_name string comment '优惠形式名称'
+ ,ca_cost double comment '优惠金额'
+ ,ca_div_ratio double comment '优惠分摊系数'
+ ,trade_biz_id string comment '关联订单'
+ ,trade_qty double comment '分摊交易量'
+ ,trade_amt double comment '分摊交易额'
+ ,fraud_is_tag int comment '诚信欺诈标识'
+ ,fraud_is_refund int comment '诚信退款标识'
+ ,trade_add_city_id int comment '城市'
+ ,trade_add_city_name string comment '城市'
+ ,trade_add_platform_id string comment '平台'
+ ,trade_add_platform_name string comment '平台'
+ ,trade_add_source string comment '下单渠道'
+ ,trade_add_os string comment '下单系统'
+ ,trade_product_type string comment '产品类型'
+ ,trade_product_id string comment '商品ID'
+ ,trade_productgrp_id string comment '商品组ID'
+ ,trade_product_title string comment '商品名称'
+ ,user_id string comment '用户ID'
+ ,trade_seq_site int comment '全站购买次数'
+ ,newbuyer_is_7days_rebuy int comment '是否7日回购新用户'
+ ,dpid string comment '用户下单时的dpid'
+ ,dpid_cal_dt string comment '设备激活日期'
+ ,dpid_train_id string comment '设备激活平台'
+ ,dpid_city_id int comment '设备激活城市'
+ ,dpid_version string comment '设备激活版本'
+ ,dpid_source string comment '主app下载渠道'
+ ,dpid_phone_model string comment '设备激活手机型号'
+ ,dpid_add_time string comment '设备激活时间'
+ ,rel_product_selfcat0_id INT COMMENT '统计分类id一级'
+ ,rel_product_selfcat0_name STRING COMMENT '统计分类名一级'
+ ,rel_product_selfcat1_id INT COMMENT '统计分类id二级'
+ ,rel_product_selfcat1_name STRING COMMENT '统计分类名二级'
+ ,dpid_source_name STRING COMMENT '主app下载渠道名称'
+ ,first_buy_ts STRING COMMENT '用户首次购买时间'
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\005'
+COLLECTION ITEMS TERMINATED BY '\002'
+MAP KEYS TERMINATED BY '\003'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE
+;
+
+
+ALTER TABLE dpdm_usr_retain SET SERDEPROPERTIES('serialization.null.format' = "");
+*#
+
+use bi;
+set mapred.job.name = dpdm_usr_retain;
+
+##增加reduce个数
+set hive.exec.reducers.bytes.per.reducer=100000000;
+##合并输出小文件
+set hive.merge.mapfiles=true;
+set hive.merge.mapredfiles=true;
+set hive.merge.size.per.task=256000000;
+set hive.mergejob.maponly=true;
+set hive.merge.smallfiles.avgsize=16000000;
+
+
+
+
+drop table tmp.ben_dpdw_event_snapshot_full_usr_retain_key;
+create table tmp.ben_dpdw_event_snapshot_full_usr_retain_key as
+SELECT
+ order_pk
+,user_ini_key
+,user_finl_key
+,ini_trade_sequence
+,finl_trade_sequence
+,is_new
+,first_buy_ts
+,total_seq
+,next_success_ts
+,success_ts
+,mobile_no
+,dpid
+,user_id
+,org_user_id
+,app_flg
+,product_type
+,order_id
+,orderitem_id
+,IF(is_new = 1,unix_timestamp(next_success_ts)-unix_timestamp(success_ts),NULL) AS 1to2_trade_sec
+,IF(is_new = 1, newbuyer_is_7days_rebuy,0) as newbuyer_is_7days_rebuy
+FROM
+  ( SELECT 
+    user_ini_key
+   ,user_finl_key
+   ,ini_trade_sequence
+   ,finl_trade_sequence
+   ,retain_key
+   ,seq
+   ,is_new
+   ,order_pk
+   ,success_ts
+   ,LEAD(success_ts) OVER (PARTITION BY retain_key ORDER BY seq) AS next_success_ts
+   ,LAST_VALUE(seq) OVER (PARTITION BY retain_key ORDER BY seq ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS total_seq
+   ,first_buy_ts
+   ,newbuyer_is_7days_rebuy
+   ,mobile_no
+   ,dpid
+   ,user_id
+   ,org_user_id
+   ,app_flg
+   ,product_type
+   ,order_id
+   ,orderitem_id
+FROM
+  ( SELECT a.user_ini_key
+          ,a.user_finl_key
+          ,a.ini_trade_sequence
+          ,a.finl_trade_sequence
+          ,COALESCE(a.user_finl_key,a.user_ini_key) retain_key
+          ,CASE WHEN a.user_finl_key IS NOT NULL THEN a.finl_trade_sequence ELSE a.ini_trade_sequence END AS seq
+          ,CASE WHEN a.ini_trade_sequence = 1 THEN 1 ELSE 0 END AS is_new
+          ,b.first_buy_ts
+          ,b.newbuyer_is_7days_rebuy
+          ,a.order_pk
+          ,a.mobile_no
+          ,a.dpid
+          ,a.user_id
+          ,a.org_user_id
+          ,a.success_ts
+          ,a.app_flg
+          ,a.product_type
+          ,a.order_id
+          ,a.orderitem_id
+     FROM (SELECT
+               fbs.user_ini_key,
+               fbs.success_ts AS first_buy_ts,
+               MAX(IF(DATEDIFF(TO_DATE(rebuy.success_ts),TO_DATE(fbs.success_ts)) BETWEEN 1 AND 7, 1 , 0 )) AS newbuyer_is_7days_rebuy
+            FROM dpdw_event_snapshot_full_usr_trade_key_sequence fbs
+            JOIN dpdw_event_snapshot_full_usr_trade_key_sequence rebuy
+            ON fbs.user_ini_key = rebuy.user_ini_key
+            AND fbs.ini_trade_sequence = 1
+            GROUP BY 1,2) b
+     JOIN dpdw_event_snapshot_full_usr_trade_key_sequence a
+     ON a.user_ini_key = b.user_ini_key
+   ) t
+)tmp;
+
+
+CREATE TABLE tmp.ben_dpdm_usr_retain as
+SELECT
+ es.use_ts
+,es.ca_use_pk
+,es.ca_item_id
+,es.ca_itemgrp_id
+,es.ca_itemgrp_title
+,es.ca_batch_id
+,es.ca_batch_title
+,es.ca_batch_creator
+,es.ca_tool_id
+,es.ca_tool_title
+,es.ca_tool_creator
+,es.ca_tool_start_ts
+,es.ca_tool_end_ts
+,es.ca_tool_budget
+,es.ca_tool_target
+,es.ca_project_id
+,es.ca_project_title
+,es.ca_project_owner
+,es.ca_projefc_dept
+,es.ca_project_bu
+,es.ca_project_start_ts
+,es.ca_project_end_ts
+,es.ca_form_id
+,es.ca_form_name
+,es.ca_cost
+,es.ca_div_ratio
+,es.trade_biz_id
+,es.trade_qty
+,es.trade_amt
+,es.fraud_is_tag
+,es.fraud_is_refund
+,es.trade_add_city_id
+,es.trade_add_city_name
+,es.trade_add_platform_id
+,es.trade_add_platform_name
+,es.trade_add_source
+,es.trade_add_os
+,es.trade_product_type
+,es.trade_product_id
+,es.trade_productgrp_id
+,es.trade_product_title
+,es.user_id
+,es.trade_seq_site
+,es.newbuyer_is_7days_rebuy
+,es.dpid
+,es.dpid_cal_dt
+,es.dpid_train_id
+,es.dpid_city_id
+,es.dpid_version  
+,es.dpid_source         
+,es.dpid_phone_model    
+,es.dpid_add_time       
+,es.rel_product_selfcat0_id
+,es.rel_product_selfcat0_name
+,es.rel_product_selfcat1_id
+,es.rel_product_selfcat1_name
+,es.dpid_source_name    
+,es.first_buy_ts        
+,k.user_ini_key
+,k.user_finl_key
+,k.1to2_trade_sec
+,k.newbuyer_is_7days_rebuy AS newbuyer_is_7days_rebuy_new
+,k.first_buy_ts  AS first_buy_ts_new
+,k.total_seq
+from es_ca_use_details es
+LEFT outer join tmp.ben_dpdw_event_snapshot_full_usr_retain_key k
+on es.trade_biz_id = if(k.order_id=0 or k.order_id is NULL ,concat('orderitem_',k.orderitem_id),concat('order_',k.order_id))
+where es.trade_product_type <> '预约预订';
+
+
+
+

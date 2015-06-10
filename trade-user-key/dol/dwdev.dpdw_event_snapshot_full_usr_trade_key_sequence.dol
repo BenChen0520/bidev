@@ -1,0 +1,77 @@
+#**
+# Name:      dpdw_event_snapshot_full_usr_trade_key_sequence
+# Desc:      根据生成的user_finial_key对全量交易数据进行排序
+# Inputs:    
+# Creat Date: 2015-05-21  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dpdw_event_snapshot_full_usr_trade_key_sequence;
+create temporary function row_number as 'org.apache.hadoop.hive.ql.udf.generic.GenericUDAFRowNumber';
+
+#**
+
+DROP TABLE IF EXISTS dpdw_event_snapshot_full_usr_trade_key_sequence;
+CREATE TABLE dpdw_event_snapshot_full_usr_trade_key_sequence (
+user_finl_key string,
+user_ini_key string,
+user_id int,
+org_user_id int,
+mobile_no string,
+dpid bigint,
+order_pk string,
+order_id int,
+orderitem_id int,
+success_ts string,
+product_type int,
+app_flg int,
+ini_trade_sequence int,
+finl_trade_sequence int
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\005'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dpdw_event_snapshot_full_usr_trade_key_sequence SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+
+INSERT OVERWRITE TABLE dpdw_event_snapshot_full_usr_trade_key_sequence
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ROW_NUMBER() OVER(PARTITION BY user_ini_key ORDER BY success_ts,order_pk) AS ini_trade_sequence,
+ROW_NUMBER() OVER(PARTITION BY user_finl_key ORDER BY success_ts,order_pk) AS finl_trade_sequence
+FROM dpdw_event_snapshot_full_usr_trade_key_mapping
+WHERE user_finl_key IS NOT NULL;
+
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_key_sequence
+SELECT
+user_finl_key,
+user_ini_key,
+user_id,
+org_user_id,
+mobile_no,
+dpid,
+order_pk,
+order_id,
+orderitem_id,
+success_ts,
+product_type,
+app_flg,
+ROW_NUMBER() OVER(PARTITION BY user_ini_key ORDER BY success_ts,order_pk) AS ini_trade_sequence,
+NULL AS finl_trade_sequence
+FROM dpdw_event_snapshot_full_usr_trade_key_mapping
+WHERE user_finl_key IS NULL;

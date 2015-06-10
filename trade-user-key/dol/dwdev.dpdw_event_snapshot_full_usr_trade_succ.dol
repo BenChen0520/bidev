@@ -1,0 +1,136 @@
+#**
+# Name:      dpdw_event_snapshot_full_usr_trade_succ
+# Desc:      全量交易数据，包括交易中心数据(团购和闪惠)，外卖，预约预定
+# Inputs:    ${env.YYYYMMDD} 数据计算时间
+# Creat Date: 2015-05-21  
+*#
+
+use bi;
+
+##设置环境变量
+set mapred.job.name = dpdw_event_snapshot_full_usr_trade_succ;
+
+#**
+
+DROP TABLE IF EXISTS dpdw_event_snapshot_full_usr_trade_succ;
+CREATE TABLE dpdw_event_snapshot_full_usr_trade_succ (
+org_user_id int,
+user_id int,
+mobile_no string,
+dpid bigint,
+order_pk string,
+order_id int,
+orderitem_id int,
+product_type int,
+platform int,
+app_flg int,
+success_ts string
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\005'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE;
+ALTER TABLE dpdw_event_snapshot_full_usr_trade_succ SET SERDEPROPERTIES('serialization.NULL.format' = '');
+
+*#
+
+
+INSERT OVERWRITE TABLE dpdw_event_snapshot_full_usr_trade_succ
+SELECT
+user_id AS org_user_id,
+user_id, 
+phone AS mobile_no, 
+dpid,
+CONCAT('ta_',record_id) AS order_pk,
+NULL AS order_id,
+pay_order_id AS orderitem_id,
+13 AS product_type,
+platform,
+IF(platform IN (3,4,5),1,0) AS app_flg,
+confirm_time AS success_ts
+FROM (
+SELECT DISTINCT
+user_id,
+phone,
+dpid,
+record_id,
+platform,
+confirm_time,
+pay_order_id
+FROM dpmid_ta_operating_expenses_sd
+WHERE confirm_time IS NOT NULL
+AND hp_cal_dt = '$env.YYYYMMDD') s
+;
+
+
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_succ
+SELECT
+yyb.user_id AS org_user_id,
+yyb.user_id,
+yyb.mobile_no,
+NULL AS dpid,
+CONCAT('book_',yyb.id) AS order_pk,
+NULL AS order_id,
+NULL AS orderitem_id,
+10 AS product_type,
+yyb.apiversion AS platform,
+IF(yyb.apiversion IS NULL,0,1) AS app_flg,
+yyo.created_time AS success_ts
+FROM
+(SELECT user_id,phone AS mobile_no, id, apiversion
+ FROM dpods_yy_bookingrecord
+ WHERE hp_statdate = '$env.YYYYMMDD') yyb
+JOIN
+( SELECT operate_id,MIN(created_time) AS created_time
+ FROM dpods_yy_operationlog 
+ WHERE operate_type = 20
+ AND operate_action = 220
+ GROUP BY 1) yyo 
+ON yyb.id = yyo.operate_id
+WHERE yyo.created_time IS NOT NULL;
+
+
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_succ
+SELECT
+user_id AS org_user_id,
+user_id,
+mobile_no,
+dpid,
+IF(order_id IS NULL OR order_id = 0,CONCAT('item_',orderitem_id), CONCAT('order_',order_id)) AS order_pk,
+order_id,
+orderitem_id,
+product_type,
+platform_id AS platform,
+IF(platform_id IN (1,2,10,11),1,0) AS app_flg,
+success_ts
+FROM dpmid_user_trade_all_tmp
+WHERE total_amt <> 0 
+AND product_type NOT IN (2,10,11,13)
+AND success_ts IS NOT NULL;
+
+INSERT INTO TABLE dpdw_event_snapshot_full_usr_trade_succ
+SELECT
+ta.user_id AS org_user_id,
+IF(mo.islogin = 1, ta.user_id, NULL) AS user_id,
+ta.mobile_no,
+ta.dpid,
+IF(order_id IS NULL OR order_id = 0,CONCAT('item_',orderitem_id), CONCAT('order_',order_id)) AS order_pk,
+order_id,
+orderitem_id,
+ta.product_type,
+ta.platform_id AS platform,
+IF(ta.platform_id IN (1,2,10,11),1,0) AS app_flg, 
+ta.success_ts
+FROM 
+(SELECT user_id,mobile_no,dpid,order_id,orderitem_id,product_type,platform_id,success_ts
+FROM dpmid_user_trade_all_tmp
+WHERE product_type = 11
+AND success_ts IS NOT NULL
+) ta
+LEFT OUTER JOIN
+(SELECT payorderid,islogin
+FROM dpods_mopay_order
+WHERE hp_statdate = '$env.YYYYMMDD'
+) mo
+ON ta.orderitem_id = mo.payorderid
+;
+

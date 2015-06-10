@@ -1,0 +1,302 @@
+#**
+# Name:   es_ca_use_details_d
+# Desc:   星图专用-优惠发放
+# Inputs: ${env.YYYYMMDD} 数据计算日期
+# Create Date: 2015-03-05
+# Histoy:
+*#
+
+#*
+DROP TABLE IF EXISTS es_ca_use_details;
+CREATE TABLE es_ca_use_details
+( use_ts string comment '优惠使用时间'
+ ,ca_use_pk string comment '优惠使用PK'
+ ,ca_item_id string comment '优惠实例ID'
+ ,ca_itemgrp_id string comment '优惠组ID'
+ ,ca_itemgrp_title string comment '优惠组名称'
+ ,ca_batch_id string comment '营销活动投放批次ID'
+ ,ca_batch_title string comment '营销活动投放批次名称'
+ ,ca_batch_creator string comment '营销活动投放批次投放人'
+ ,ca_tool_id string comment '营销活动投放工具ID'
+ ,ca_tool_title string comment '营销活动投放名称'
+ ,ca_tool_creator string comment '营销活动投放工具创建人'
+ ,ca_tool_start_ts string comment '营销活动投放工具投放开始时间'
+ ,ca_tool_end_ts string comment '营销活动投放工具投放结束时间'
+ ,ca_tool_budget double comment '营销活动投放工具预算额'
+ ,ca_tool_target string comment '营销活动投放工具营销目标'
+ ,ca_project_id string comment '营销活动ID'
+ ,ca_project_title string comment '营销活动名称'
+ ,ca_project_owner string comment '营销活动责任人'
+ ,ca_projefc_dept string comment '营销活动责任部门'
+ ,ca_project_bu string comment '营销活动责任BU'
+ ,ca_project_start_ts string comment '营销活动开始时间'
+ ,ca_project_end_ts string comment '营销活动结束时间'
+ ,ca_form_id string comment '优惠形式ID'
+ ,ca_form_name string comment '优惠形式名称'
+ ,ca_cost double comment '优惠金额'
+ ,ca_div_ratio double comment '优惠分摊系数'
+ ,trade_biz_id string comment '关联订单'
+ ,trade_qty double comment '分摊交易量'
+ ,trade_amt double comment '分摊交易额'
+ ,fraud_is_tag int comment '诚信欺诈标识'
+ ,fraud_is_refund int comment '诚信退款标识'
+ ,trade_add_city_id int comment '城市'
+ ,trade_add_city_name string comment '城市'
+ ,trade_add_platform_id string comment '平台'
+ ,trade_add_platform_name string comment '平台'
+ ,trade_add_source string comment '下单渠道'
+ ,trade_add_os string comment '下单系统'
+ ,trade_product_type string comment '产品类型'
+ ,trade_product_id string comment '商品ID'
+ ,trade_productgrp_id string comment '商品组ID'
+ ,trade_product_title string comment '商品名称'
+ ,user_id string comment '用户ID'
+ ,trade_seq_site int comment '全站购买次数'
+ ,newbuyer_is_7days_rebuy int comment '是否7日回购新用户'
+ ,dpid string comment '用户下单时的dpid'
+ ,dpid_cal_dt string comment '设备激活日期'
+ ,dpid_train_id string comment '设备激活平台'
+ ,dpid_city_id int comment '设备激活城市'
+ ,dpid_version string comment '设备激活版本'
+ ,dpid_source string comment '主app下载渠道'
+ ,dpid_phone_model string comment '设备激活手机型号'
+ ,dpid_add_time string comment '设备激活时间'
+ ,rel_product_selfcat0_id INT COMMENT '统计分类id一级'
+ ,rel_product_selfcat0_name STRING COMMENT '统计分类名一级'
+ ,rel_product_selfcat1_id INT COMMENT '统计分类id二级'
+ ,rel_product_selfcat1_name STRING COMMENT '统计分类名二级'
+ ,dpid_source_name STRING COMMENT '主app下载渠道名称'
+ ,first_buy_ts STRING COMMENT '用户首次购买时间'
+ ,user_finl_key string
+ ,user_ini_key string
+ 
+) PARTITIONED BY (hp_cal_hour string)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\005'
+COLLECTION ITEMS TERMINATED BY '\002'
+MAP KEYS TERMINATED BY '\003'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE
+;
+
+ALTER TABLE es_ca_use_details SET SERDEPROPERTIES('serialization.null.format' = "");
+*#
+
+##设置环境变量
+#set ($suffix="${env.YYYY}${env.MM}${env.DD}");
+
+use bi;
+set mapred.job.name = es_ca_use_details;
+
+##mapjoin bug
+set hive.auto.convert.join=false;
+
+##合并输出小文件
+set hive.merge.mapfiles=true;
+set hive.merge.mapredfiles=true;
+set hive.merge.size.per.task=256000000;
+set hive.mergejob.maponly=true;
+set hive.merge.smallfiles.avgsize=16000000;
+
+
+
+##按订单汇总记录相关运营活动信息及运营总成本
+DROP TABLE IF EXISTS dpstg_es_ca_usedetails_d_div_$suffix;
+CREATE TABLE dpstg_es_ca_usedetails_d_div_$suffix AS
+SELECT trade_biz_id,sum(ca_cost) cost
+FROM
+( select ca_cost,trade_biz_id 
+  from dpdw_event_incr_h_ca_discount_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+union all
+  select ca_cost,trade_biz_id 
+  from dpdw_event_incr_h_ca_reduction_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+union all
+  select ca_cost,trade_biz_id 
+  from dpdw_event_incr_h_ca_account_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null 
+union all
+  select ca_cost,concat('order', movie_orderitem_id) trade_biz_id 
+  from dpdw_event_incr_h_ca_voucher_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+) x
+GROUP BY trade_biz_id;
+
+##合并输出小文件
+set hive.merge.mapfiles=true;
+set hive.merge.mapredfiles=true;
+set hive.merge.size.per.task=256000000;
+set hive.mergejob.maponly=true;
+set hive.merge.smallfiles.avgsize=16000000;
+
+##动态分区
+set hive.exec.dynamic.partition=true;
+set hive.exec.dynamic.partition.mode=nonstrict;
+set hive.exec.max.dynamic.partitions.pernode=15000;
+
+DROP TABLE IF EXISTS dpstg_es_ca_usedetails_d_rslt_$suffix;
+CREATE TABLE dpstg_es_ca_usedetails_d_rslt_$suffix AS
+SELECT detl.use_ts,detl.ca_use_pk
+  ,detl.ca_item_id,detl.ca_itemgrp_id,'' ca_itemgrp_title
+  ,detl.ca_batch_id,cadetl.ca_batch_title,cadetl.ca_batch_creator
+  ,cadetl.ca_tool_id,cadetl.ca_tool_title,cadetl.ca_tool_creator
+  ,cadetl.ca_tool_start_ts,cadetl.ca_tool_end_ts
+  ,cadetl.ca_tool_budget,cadetl.ca_tool_target
+  ,cadetl.ca_project_id,cadetl.ca_project_title
+  ,cadetl.ca_project_owner,cadetl.ca_projefc_dept,cadetl.ca_project_bu
+  ,cadetl.ca_project_start_ts,cadetl.ca_project_end_ts
+  ,cadetl.ca_form_id,cadetl.ca_form_name
+  ,detl.ca_cost,(detl.ca_cost/dv.cost) ca_div_ratio
+  ,detl.trade_biz_id
+  ,o.ind_quantity trade_qty
+  ,o.ind_order_amt trade_amt
+  ,if(o.is_order_ticket = 1 OR o.is_order_abandon = 1,1,0) fraud_is_tag,if(o.refundstatus IN (2,3) AND o.is_order_abandon = 1,1,0) fraud_is_refund
+  ,o.dim_city_id trade_add_city_id,o.dim_city_name trade_add_city_name
+  ,o.dim_add_platform_id trade_add_platform_id,coalesce(o.dim_add_platform_name,'其他') trade_add_platform_name
+  ,coalesce(s.src,ms.start_from_dom) trade_add_source
+  ,if(o.dim_add_platform_name='PC','pc',o.dim_add_platform_os) trade_add_os
+  ,t.dw_name
+  ,o.dim_product_id trade_product_id,o.dim_productgroup_id trade_productgrp_id,'' trade_product_title
+  ,o.user_id,seq.total_seq
+  ,0 newbuyer_is_7days_rebuy
+  ,o.order_add_dpid dpid
+  ,dmd.cal_dt dpid_cal_dt
+  ,dmd.train_id dpid_train_id
+  ,dmd.city_id dpid_city_id
+  ,dmd.version dpid_version
+  ,dmd.source dpid_source
+  ,dmd.phone_model dpid_phone_model
+  ,dmd.add_time dpid_add_time
+  ,o.rel_product_selfcat0_id
+  ,o.rel_product_selfcat0_name
+  ,o.rel_product_selfcat1_id
+  ,o.rel_product_selfcat1_name
+  ,bas.source_name dpid_source_name
+  ,seq2.success_ts first_buy_ts
+  ,substring(detl.use_ts,0,13) hp_cal_hour
+FROM 
+##优惠使用
+( select event_ts use_ts,ca_use_pk
+    ,ca_item_id,ca_itemgrp_id
+    ,ca_batch_id
+    ,ca_cost,trade_biz_id 
+  from dpdw_event_incr_h_ca_discount_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+union all
+  select event_ts use_ts,ca_use_pk
+    ,ca_item_id,ca_itemgrp_id
+    ,ca_batch_id
+    ,ca_cost,trade_biz_id 
+  from dpdw_event_incr_h_ca_reduction_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+union all
+  select min(event_ts) use_ts,concat_ws(',',to_array(ca_use_pk)) ca_use_pk
+    ,concat_ws(',',to_array(ca_item_id)) ca_item_id,ca_itemgrp_id
+    ,ca_batch_id
+    ,sum(ca_cost) ca_cost,trade_biz_id 
+  from dpdw_event_incr_h_ca_account_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+  group by ca_itemgrp_id
+    ,ca_batch_id,trade_biz_id
+union all
+  select min(event_ts) use_ts,concat_ws(',',to_array(ca_use_pk)) ca_use_pk
+    ,concat_ws(',',to_array(ca_item_id)) ca_item_id,ca_itemgrp_id
+    ,ca_batch_id
+    ,sum(ca_cost) ca_cost,concat('order', movie_orderitem_id) trade_biz_id 
+  from dpdw_event_incr_h_ca_voucher_use
+  where substring(hp_cal_hour,0,10)='$env.YYYYMMDD'
+    and ca_tool_id is not null
+  group by ca_itemgrp_id
+    ,ca_batch_id,concat('order', movie_orderitem_id)
+) detl
+--订单表
+JOIN dpdw_wide_incr_d_tgtrd_order o
+  on o.hp_cal_dt = '${env.YYYYMMDD}'
+  AND substr(o.order_suc_ts, 1,10) = '${env.YYYYMMDD}'
+  and detl.trade_biz_id=if(o.order_id=0,concat('orderitem_',o.orderitem_id),concat('order_',o.order_id))
+--用户dpid激活渠道
+LEFT OUTER JOIN dpmid_mb_deviceid dmd
+  ON o.order_add_dpid = dmd.dpid
+--下载渠道中文
+LEFT OUTER JOIN dpdim_bi_app_source bas
+  ON bas.hp_cal_dt = '${env.YYYYMMDD}'
+  AND dmd.source = bas.source
+--交易产品类型,不采用支付中心定义的。
+LEFT OUTER JOIN dpdim_dp_product_type t
+  on o.product_type=t.pct_product_type
+--流量来源-团购
+LEFT OUTER JOIN dpmid_tg_order_source s
+  on o.order_id=s.order_id and s.hp_cal_dt='${env.YYYYMMDD}' 
+    and o.product_type in (0,1,8) and o.order_id<>0
+--流量来源-电影订座
+LEFT OUTER JOIN dpmid_movie_order_source_pc ms
+  on o.orderitem_id=ms.order_item_id and ms.hp_cal_dt='${env.YYYYMMDD}' 
+    and o.product_type in (3)
+--用户订单的购买顺次
+LEFT OUTER JOIN dpdm_trade_user_order seq
+  on o.orderitem_id=seq.orderitem_id and seq.hp_cal_dt='${env.YYYYMMDD}' 
+--用户首次购买时间
+LEFT OUTER JOIN
+(select * from dpdm_trade_user_order where  hp_cal_dt <= '${env.YYYYMMDD}' and  total_seq = 1) seq2
+on o.user_id = seq2.user_id
+--活动维表
+LEFT OUTER JOIN dpdim_domain_ca cadetl
+  on cadetl.hp_cal_dt='${env.YYYYMMDD}' 
+    and detl.ca_batch_id=cadetl.ca_batch_id
+--活动均摊系数
+LEFT OUTER JOIN dpstg_es_ca_usedetails_d_div_$suffix dv
+  on detl.trade_biz_id=dv.trade_biz_id
+;
+
+##目标表处理
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 00');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 01');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 02');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 03');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 04');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 05');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 06');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 07');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 08');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 09');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 10');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 11');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 12');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 13');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 14');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 15');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 16');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 17');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 18');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 19');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 20');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 21');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 22');
+ALTER TABLE es_ca_use_details DROP PARTITION(hp_cal_hour='$env.YYYYMMDD 23');
+
+INSERT OVERWRITE TABLE es_ca_use_details PARTITION(hp_cal_hour)
+SELECT * FROM dpstg_es_ca_usedetails_d_rslt_$suffix
+;
+
+INSERT OVERWRITE TABLE es_ca_use_details PARTITION(hp_cal_hour)
+SELECT x.use_ts, x.ca_use_pk, x.ca_item_id, x.ca_itemgrp_id, x.ca_itemgrp_title, x.ca_batch_id, x.ca_batch_title, x.ca_batch_creator, x.ca_tool_id, x.ca_tool_title, x.ca_tool_creator, x.ca_tool_start_ts, x.ca_tool_end_ts, x.ca_tool_budget, x.ca_tool_target, x.ca_project_id, x.ca_project_title, x.ca_project_owner, x.ca_projefc_dept, x.ca_project_bu, x.ca_project_start_ts, x.ca_project_end_ts, x.ca_form_id, x.ca_form_name, x.ca_cost, x.ca_div_ratio, x.trade_biz_id, x.trade_qty, x.trade_amt, x.fraud_is_tag, x.fraud_is_refund, x.trade_add_city_id, x.trade_add_city_name, x.trade_add_platform_id, x.trade_add_platform_name, x.trade_add_source, x.trade_add_os, x.trade_product_type, x.trade_product_id, x.trade_productgrp_id, x.trade_product_title, x.user_id, x.trade_seq_site
+  ,if(x.trade_seq_site=1 and y.is_7days_buy=1,1,0) newbuyer_is_7days_rebuy
+  ,x.dpid,x.dpid_cal_dt,x.dpid_train_id,x.dpid_city_id,x.dpid_version,x.dpid_source,x.dpid_phone_model,x.dpid_add_time,x.rel_product_selfcat0_id,x.rel_product_selfcat0_name,x.rel_product_selfcat1_id,x.rel_product_selfcat1_name,x.dpid_source_name,x.first_buy_ts
+  , x.hp_cal_hour
+FROM es_ca_use_details x
+LEFT OUTER JOIN dpmid_op_new_userid_trade_fact y
+  on x.user_id=y.user_id
+    and y.hp_valid_end_dt='${env.YYYYMMDD_DEFAULT_HP_DT}'
+WHERE x.hp_cal_hour between '$env.YYYYMMDD_P7D' and '$env.YYYYMMDD_N1D';
+
+##临时表删除
+DROP TABLE IF EXISTS dpstg_es_ca_usedetails_d_rslt_$suffix;
+DROP TABLE IF EXISTS dpstg_es_ca_usedetails_d_div_$suffix;
