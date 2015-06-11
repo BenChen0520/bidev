@@ -1,0 +1,186 @@
+use bi;
+
+set mapred.job.name = dpdm_wide_incr_d_forum_user_activity;
+
+insert overwrite table dpdm_wide_incr_d_forum_user_activity partition (hp_cal_dt = '${env.YYYYMMDD}')
+select coalesce(nflss.note_id, delete_gng.note_id) as note_id,
+coalesce(nflss.user_id, delete_gng.user_id) as user_id,
+case when nflss.gn_user_id is not null then 1 end as gn_user_flag,
+case when nflss.gfn_user_id is not null then 1 end as gfn_user_flag,
+nflss.follow_cnt,
+case when nflss.gnl_user_id is not null then 1 end as gnl_user_flag,
+case when nflss.gsm_user_id is not null then 1 end as gsm_user_flag,
+case when nflss.gns_user_id is not null then 1 end as gns_user_flag,
+nflss.score,
+case when delete_gng.good_user_id is not null then 1 end as good_user_flag,
+case when delete_gng.ng_user_id is not null then 1 end as ng_user_flag,
+case when delete_gng.gndh_user_id is not null then 1 end as gndh_user_flag,
+case when delete_gng.gndu_user_id is not null then 1 end as gndu_user_flag,
+case when delete_gng.fgndh_user_id is not null then 1 end as fgndh_user_flag,
+delete_gng.fgndh_follow_cnt,
+case when delete_gng.fgndu_user_id is not null then 1 end as fgndu_user_flag,
+delete_gng.fgndu_follow_cnt
+from
+(select coalesce(note_follow_like_survey.note_id, score.noteid) as note_id,
+coalesce(note_follow_like_survey.user_id, score.userid) as user_id,
+note_follow_like_survey.gn_user_id,
+note_follow_like_survey.gfn_user_id,
+note_follow_like_survey.follow_cnt,
+note_follow_like_survey.gnl_user_id,
+note_follow_like_survey.gsm_user_id,
+score.userid as gns_user_id,
+score.score as score
+from
+(select coalesce(note_follow.note_id, like_survey.note_id) as note_id,
+coalesce(note_follow.user_id, like_survey.user_id) as user_id,
+note_follow.gn_user_id,
+note_follow.gfn_user_id,
+note_follow.follow_cnt,
+like_survey.gnl_user_id,
+like_survey.gsm_user_id
+from
+(select coalesce(gn.noteid, gfn.noteid) as note_id,
+coalesce(gn.userid, gfn.userid) as user_id,
+gn.userid as gn_user_id,
+gfn.userid as gfn_user_id,
+gfn.follow_cnt
+from
+(select noteid, userid
+from dpods_dp_groupnote
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(addtime,1,10) = '${env.YYYYMMDD}'
+and verifystatus = 2) gn
+full outer join
+(select noteid, userid, count(follownoteid) follow_cnt
+from dpods_dp_groupfollownote
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(addtime,1,10) = '${env.YYYYMMDD}'
+and verifystatus = 2
+group by noteid, userid) gfn
+on gn.noteid = gfn.noteid
+and gn.userid = gfn.userid) note_follow
+full outer join
+(select coalesce(gnl.noteid, gsm.noteid) as note_id,
+coalesce(gnl.userid, gsm.userid) as user_id,
+gnl.userid as gnl_user_id,
+gsm.userid as gsm_user_id
+from
+(select userid, noteid
+from dpods_dp_groupnotelike
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(addtime,1,10) = '${env.YYYYMMDD}'
+and status = 1) gnl
+full outer join
+(select survey.noteid, survey_user.userid
+from
+(select surveyid, noteid
+from dpods_dp_groupsurvey
+where hp_statdate = '${env.YYYYMMDD}') survey
+join
+(select surveyid, userid
+from dpods_dp_groupsurveymember
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(adddate, 1, 10) = '${env.YYYYMMDD}'
+group by surveyid, userid) survey_user
+on survey.surveyid = survey_user.surveyid) gsm
+on gnl.userid = gsm.userid
+and gnl.noteid = gsm.noteid) like_survey
+on note_follow.user_id = like_survey.user_id
+and note_follow.note_id = like_survey.note_id) note_follow_like_survey
+full outer join
+(select userid,noteid,score
+from dpods_dp_groupnotescorelog
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(adddate, 1, 10) = '${env.YYYYMMDD}') score
+on note_follow_like_survey.note_id = score.noteid
+and note_follow_like_survey.user_id = score.userid) nflss
+full outer join
+(select coalesce(note_follow_delete.note_id, g_ng.note_id) as note_id,
+coalesce(note_follow_delete.user_id, g_ng.user_id) as user_id,
+note_follow_delete.gndh_user_id,
+note_follow_delete.gndu_user_id,
+note_follow_delete.fgndh_user_id,
+note_follow_delete.fgndh_follow_cnt,
+note_follow_delete.fgndu_user_id,
+note_follow_delete.fgndu_follow_cnt,
+g_ng.good_user_id,
+g_ng.ng_user_id
+from
+(select coalesce(note_delete.note_id, follow_note_delete.note_id) as note_id,
+coalesce(note_delete.user_id, follow_note_delete.user_id) as user_id,
+note_delete.gndh_user_id,
+note_delete.gndu_user_id,
+follow_note_delete.fgndh_user_id,
+follow_note_delete.fgndh_follow_cnt,
+follow_note_delete.fgndu_user_id,
+follow_note_delete.fgndu_follow_cnt
+from
+(select coalesce(note_delete_hand.noteid, note_delete_user.noteid) as note_id,
+coalesce(note_delete_hand.userid, note_delete_user.userid) as user_id,
+note_delete_hand.userid as gndh_user_id,
+note_delete_user.userid as gndu_user_id
+from
+(select noteid,userid
+from dpods_dp_groupnote
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(uptimestamp,1,10) = '${env.YYYYMMDD}'
+and substr(addtime,1,10) < '${env.YYYYMMDD}'
+and verifystatus = 3) note_delete_hand
+full outer join
+(select noteid,userid
+from dpods_dp_groupnote
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(uptimestamp,1,10) = '${env.YYYYMMDD}'
+and substr(addtime,1,10) < '${env.YYYYMMDD}'
+and verifystatus = 4) note_delete_user
+on note_delete_hand.noteid = note_delete_user.noteid
+and note_delete_hand.userid = note_delete_user.userid) note_delete
+full outer join
+(select coalesce(follow_note_delete_hand.noteid, follow_note_delete_user.noteid) as note_id,
+coalesce(follow_note_delete_hand.userid, follow_note_delete_user.userid) as user_id,
+follow_note_delete_hand.userid as fgndh_user_id,
+follow_note_delete_hand.follow_cnt as fgndh_follow_cnt,
+follow_note_delete_user.userid as fgndu_user_id,
+follow_note_delete_user.follow_cnt as fgndu_follow_cnt
+from
+(select noteid, userid, count(follownoteid) as follow_cnt
+from dpods_dp_groupfollownote
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(updatetime,1,10) = '${env.YYYYMMDD}'
+and substr(addtime,1,10) < '${env.YYYYMMDD}'
+and verifystatus = 3
+group by noteid, userid) follow_note_delete_hand
+full outer join
+(select noteid, userid, count(follownoteid) as follow_cnt
+from dpods_dp_groupfollownote
+where hp_statdate = '${env.YYYYMMDD}'
+and substr(updatetime,1,10) = '${env.YYYYMMDD}'
+and substr(addtime,1,10) < '${env.YYYYMMDD}'
+and verifystatus = 4
+group by noteid, userid) follow_note_delete_user
+on follow_note_delete_hand.noteid = follow_note_delete_user.noteid
+and follow_note_delete_hand.userid = follow_note_delete_user.userid) follow_note_delete
+on note_delete.note_id = follow_note_delete.note_id
+and note_delete.user_id = follow_note_delete.user_id) note_follow_delete
+full outer join
+(select coalesce(good.noteid, not_good.noteid) as note_id,
+coalesce(good.userid, not_good.userid) as user_id,
+good.userid as good_user_id,
+not_good.userid as ng_user_id
+from
+(SELECT userid, noteid
+FROM dpods_DP_GroupOperateLog
+WHERE hp_statdate = '${env.YYYYMMDD}'
+and OperateType = 5) good
+full outer join
+(SELECT userid, noteid
+FROM dpods_DP_GroupOperateLog
+WHERE hp_statdate = '${env.YYYYMMDD}'
+and OperateType = 6) not_good
+on good.userid = not_good.userid
+and good.noteid = not_good.noteid) g_ng
+on note_follow_delete.note_id = g_ng.note_id
+and note_follow_delete.user_id = g_ng.user_id) delete_gng
+on nflss.note_id = delete_gng.note_id
+and nflss.user_id = delete_gng.user_id
+; 

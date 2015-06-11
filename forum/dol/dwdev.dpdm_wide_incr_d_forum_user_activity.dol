@@ -1,0 +1,216 @@
+#**
+drop table if exists dpdm_wide_incr_d_forum_user_activity;
+create table dpdm_wide_incr_d_forum_user_activity
+(note_id bigint comment '帖子id',
+user_id bigint comment '用户id',
+gn_user_flag smallint comment '是否发该帖子',
+gfn_user_flag smallint comment '是否在该帖子回帖',
+follow_cnt int comment '在该帖子回帖数',
+gnl_user_flag smallint comment '是否在该帖子点赞',
+gsm_user_flag smallint comment '是否在该帖子投票',
+gns_user_flag smallint comment '是否给该帖子加分',
+score int comment '给该帖子加分数',
+good_user_flag smallint comment '是否把该帖设置为精华帖',
+ng_user_flag smallint comment '是否取消该精华帖子',
+gndh_user_flag smallint comment '是否被人工删除',
+gndu_user_flag smallint comment '是否被用户删除',
+fgndh_user_flag smallint comment '是否回帖被人工删除',
+fgndh_follow_cnt int comment '人工删除回帖数',
+fgndu_user_flag smallint comment '是否回帖被用户删除',
+fgndu_follow_cnt int comment '用户删除回帖数'
+)
+PARTITIONED BY
+(hp_cal_dt string)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\005'
+COLLECTION ITEMS TERMINATED BY '\002'
+MAP KEYS TERMINATED BY '\003'
+LINES TERMINATED BY '\n'
+STORED AS RCFILE
+;
+ALTER TABLE dpdm_wide_incr_d_forum_user_activity SET SERDEPROPERTIES('serialization.null.format' = "");
+*#
+
+
+use bi;
+
+set mapred.job.name = dpdm_wide_incr_d_forum_user_activity;
+
+DROP TABLE IF EXISTS dpstg_wide_snapshot_d_forum_survey_user;
+create table dpstg_wide_snapshot_d_forum_survey_user AS
+SELECT
+survey_user.cal_dt,
+survey.noteid,
+survey_user.userid
+FROM(SELECT surveyid, noteid FROM dpods_dp_groupsurvey WHERE hp_statdate = '${env.YYYYMMDD}') survey
+JOIN (SELECT SUBSTR(adddate, 1, 10) AS cal_dt,surveyid,userid
+      FROM dpods_dp_groupsurveymember 
+      WHERE hp_statdate = '${env.YYYYMMDD}' 
+      AND SUBSTR(adddate,1,10) = '${env.YYYYMMDD}'
+      GROUP BY 1,2,3) survey_user
+ON survey.surveyid = survey_user.surveyid;
+
+
+DROP TABLE IF EXISTS dpstg_wide_snapshot_d_forum_user;
+CREATE TABLE dpstg_wide_snapshot_d_forum_user AS
+SELECT DISTINCT
+cal_dt,
+noteid,
+userid
+FROM
+(
+-- 发帖
+SELECT SUBSTR(addtime,1,10) AS cal_dt,noteid,userid
+FROM dpods_dp_groupnote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) = '${env.YYYYMMDD}'
+AND verifystatus = 2
+
+UNION ALL
+-- 删帖
+SELECT SUBSTR(uptimestamp,1,10) AS cal_dt,noteid,userid
+FROM dpods_dp_groupnote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(uptimestamp,1,10) = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) < '${env.YYYYMMDD}'
+AND verifystatus IN (3,4)
+
+UNION ALL
+-- 发回帖
+SELECT SUBSTR(addtime,1,10) AS cal_dt,noteid,userid
+FROM dpods_dp_groupfollownote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) = '${env.YYYYMMDD}'
+AND verifystatus = 2
+
+UNION ALL
+-- 删回帖
+SELECT SUBSTR(updatetime,1,10) AS cal_dt,noteid,userid
+FROM dpods_dp_groupfollownote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(updatetime,1,10) = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) < '${env.YYYYMMDD}'
+AND verifystatus IN (3,4)
+
+UNION ALL
+-- 点赞
+SELECT SUBSTR(addtime,1,10) AS cal_dt,noteid,userid
+FROM dpods_dp_groupnotelike
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) = '${env.YYYYMMDD}'
+AND status = 1
+AND userid > 0
+
+UNION ALL
+-- 投票贴投票情况
+SELECT cal_dt,noteid,userid
+FROM dpstg_wide_snapshot_d_forum_survey_user
+
+UNION ALL
+-- 加分
+SELECT SUBSTR(adddate, 1, 10) AS cal_dt,noteid,userid
+FROM dpods_dp_groupnotescorelog
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(adddate,1,10) = '${env.YYYYMMDD}'
+
+UNION ALL
+-- 设置/取消精华贴
+SELECT hp_statdate AS cal_dt,noteid,userid
+FROM dpods_dp_groupoperatelog
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND operatetype IN (5,6)
+) tmp;
+
+ALTER TABLE dpdm_wide_incr_d_forum_user_activity DROP IF EXISTS PARTITION(hp_cal_dt = '${env.YYYYMMDD}');
+INSERT OVERWRITE TABLE dpdm_wide_incr_d_forum_user_activity PARTITION(hp_cal_dt='${env.YYYYMMDD}')
+SELECT
+usr.noteid AS note_id,
+usr.userid AS user_id,
+IF(gn.noteid IS NULL,NULL,1) AS gn_user_flag,
+IF(gfn.noteid IS NULL,NULL,1) AS gfn_user_flag,
+IF(gfn.noteid IS NULL,NULL,gfn.follow_cnt) AS follow_cnt,
+IF(gnl.noteid IS NULL,NULL,1) AS gnl_user_flag,
+IF(gsm.noteid IS NULL,NULL,1) AS gsm_user_flag,
+IF(gns.noteid IS NULL,NULL,1) AS gns_user_flag,
+IF(gns.noteid IS NULL,NULL,gns.score) AS score,
+IF(isgood.noteid IS NULL,NULL,isgood.good_user_flag) AS good_user_flag,
+IF(isgood.noteid IS NULL,NULL,isgood.ng_user_flag) AS ng_user_flag,
+IF(dn.noteid IS NULL,NULL,dn.gndh_user_flag) AS gndh_user_flag,
+IF(dn.noteid IS NULL,NULL,dn.gndu_user_flag) AS gndu_user_flag,
+IF(dfn.noteid IS NULL,NULL,dfn.fgndh_user_flag) AS fgndh_user_flag,
+IF(dfn.noteid IS NULL,NULL,dfn.fgndh_follow_cnt) AS fgndh_follow_cnt,
+IF(dfn.noteid IS NULL,NULL,dfn.fgndu_user_flag) AS fgndu_user_flag,
+IF(dfn.noteid IS NULL,NULL,dfn.fgndu_follow_cnt) AS fgndu_follow_cnt
+FROM dpstg_wide_snapshot_d_forum_user usr
+LEFT OUTER JOIN 
+(SELECT noteid,userid
+FROM dpods_dp_groupnote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) = '${env.YYYYMMDD}'
+AND verifystatus = 2) gn -- 发帖
+ON usr.noteid = gn.noteid
+AND usr.userid = gn.userid
+LEFT OUTER JOIN 
+(SELECT noteid,userid,SUM(1) AS follow_cnt
+FROM dpods_dp_groupfollownote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) = '${env.YYYYMMDD}'
+AND verifystatus = 2
+GROUP BY 1,2) gfn -- 回帖
+ON usr.noteid = gfn.noteid
+AND usr.userid = gfn.userid
+LEFT OUTER JOIN
+(SELECT noteid,userid
+FROM dpods_dp_groupnotelike
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) = '${env.YYYYMMDD}'
+AND status = 1
+AND userid > 0
+GROUP BY 1,2) gnl -- 点赞
+ON usr.noteid = gnl.noteid
+AND usr.userid = gnl.userid
+LEFT OUTER JOIN dpstg_wide_snapshot_d_forum_survey_user gsm -- 投票
+ON usr.noteid = gsm.noteid
+AND usr.userid = gsm.userid
+LEFT OUTER JOIN
+(SELECT noteid,userid,SUM(score) AS score
+FROM dpods_dp_groupnotescorelog
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(adddate,1,10) = '${env.YYYYMMDD}'
+GROUP BY 1,2) gns -- 加分
+ON usr.noteid = gns.noteid
+AND usr.userid = gns.userid
+LEFT OUTER JOIN
+(SELECT noteid,userid,MAX(IF(operatetype = 5,1,NULL)) AS good_user_flag,MAX(IF(operatetype = 6,1,NULL)) AS ng_user_flag
+FROM dpods_dp_groupoperatelog
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND operatetype IN (5,6)
+GROUP BY 1,2) isgood -- 设置/取消为精华帖
+ON usr.noteid = isgood.noteid
+AND usr.userid = isgood.userid
+LEFT OUTER JOIN
+(SELECT noteid,userid,MAX(IF(verifystatus = 3,1,NULL)) AS gndh_user_flag,MAX(IF(verifystatus = 4,1,NULL)) AS gndu_user_flag
+FROM dpods_dp_groupnote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(uptimestamp,1,10) = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) < '${env.YYYYMMDD}'
+AND verifystatus IN (3,4)
+GROUP BY 1,2) dn -- 人工删除/用户删除帖子
+ON usr.noteid = dn.noteid
+AND usr.userid = dn.userid
+LEFT OUTER JOIN
+(SELECT noteid,userid,
+MAX(IF(verifystatus = 3,1,NULL)) AS fgndh_user_flag,
+SUM(IF(verifystatus = 3,1,NULL)) AS fgndh_follow_cnt,
+MAX(IF(verifystatus = 4,1,NULL)) AS fgndu_user_flag,
+SUM(IF(verifystatus = 4,1,NULL)) AS fgndu_follow_cnt
+FROM dpods_dp_groupfollownote
+WHERE hp_statdate = '${env.YYYYMMDD}'
+AND SUBSTR(updatetime,1,10) = '${env.YYYYMMDD}'
+AND SUBSTR(addtime,1,10) < '${env.YYYYMMDD}'
+AND verifystatus IN (3,4)
+GROUP BY 1,2) dfn -- 人工删除/用户删除回帖
+ON usr.noteid = dfn.noteid
+AND usr.userid = dfn.userid
+WHERE usr.cal_dt = '${env.YYYYMMDD}';
+
